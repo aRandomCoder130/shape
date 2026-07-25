@@ -2,6 +2,22 @@
 
 A lightweight, block-friendly rigid-body physics extension for Microsoft MakeCode Arcade.
 
+## What v0.2 adds
+
+- Heptagons, octagons, nonagons, and decagons
+- Heart and star artwork shapes
+- Torque and angular impulses
+- Mass-based moments of inertia
+- Off-center collisions that create spin
+- Rotational friction response
+- Rigid distance joints
+- Damped spring joints
+- World-pin joints
+- Adjustable joint lengths and break forces
+- Optional joint debug lines
+
+Stars are rendered as concave five-point stars and use their five outer tips as a convex collision hull. Hearts use a circular collision proxy. These simplified colliders keep the extension practical on Arcade hardware.
+
 ## Features
 
 - Circles
@@ -9,6 +25,11 @@ A lightweight, block-friendly rigid-body physics extension for Microsoft MakeCod
 - Squares
 - Pentagons
 - Hexagons
+- Heptagons
+- Octagons
+- Nonagons
+- Decagons
+- Hearts and stars with simplified colliders
 - Static rectangular platforms
 - Dynamic and static bodies
 - Gravity, forces, impulses, velocity, and drag
@@ -35,7 +56,7 @@ shapePhysics.setAngularVelocity(hexagon, 90)
 
 The `size` of a polygon is the distance from its center to each corner. A square with size 10 is therefore wider than 10 pixels.
 
-## Forces and impulses
+## Forces, impulses, and torque
 
 Velocity is measured in pixels per second:
 
@@ -53,6 +74,43 @@ An impulse changes velocity immediately and is useful for jumps, explosions, bum
 
 ```blocks
 shapePhysics.applyImpulse(ball, 25, -45)
+```
+
+Torque accelerates rotation over the current frame. An angular impulse changes rotational speed immediately:
+
+```blocks
+shapePhysics.applyTorque(hexagon, 300)
+shapePhysics.applyAngularImpulse(hexagon, 20)
+```
+
+Collisions use approximate contact points, so off-center impacts naturally make polygons spin.
+
+## Joints
+
+Keep two bodies at a fixed distance:
+
+```blocks
+let rope = shapePhysics.createDistanceJoint(ball, hexagon, 30)
+```
+
+Create a flexible, damped spring:
+
+```blocks
+let spring = shapePhysics.createSpringJoint(ball, hexagon, 35, 30, 20)
+```
+
+Pin a body to a world position, producing pendulums and swinging obstacles:
+
+```blocks
+let pendulum = shapePhysics.createPinJoint(hexagon, 80, 15, 40)
+```
+
+Joint lengths can be changed while the game runs. Break force disables a joint when its constraint stress becomes too high:
+
+```blocks
+shapePhysics.setJointLength(spring, 20)
+shapePhysics.setJointBreakForce(rope, 500)
+shapePhysics.showJoints(true)
 ```
 
 ## Materials
@@ -103,7 +161,7 @@ This is deliberately a small convex-body engine rather than a complete desktop p
 - Keep polygons convex.
 - Disable unnecessary rotation by leaving angular velocity at zero.
 - Two solver iterations are generally enough for arcade games.
-- Very fast, tiny bodies can tunnel through thin objects because continuous collision detection is not included in v0.1.
+- Very fast, tiny bodies can tunnel through thin objects because continuous collision detection is not included in v0.2.
 
 ## Import into Arcade
 
@@ -111,7 +169,7 @@ This is deliberately a small convex-body engine rather than a complete desktop p
 2. Open a project in [MakeCode Arcade](https://arcade.makecode.com/).
 3. Choose **Extensions**, paste the exact repository URL, and import it.
 
-For releases, tag versions using semantic versioning, such as `v0.1.0`.
+For releases, tag versions using semantic versioning, such as `v0.2.0`.
 
 ## License
 

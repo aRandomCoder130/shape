@@ -1,6 +1,6 @@
 {
     "name": "arcade-shape-physics",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "description": "Block-friendly circle and convex polygon physics for MakeCode Arcade.",
     "license": "MIT",
     "public": true,

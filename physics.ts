@@ -1,7 +1,7 @@
 /** Lightweight rigid-body physics for MakeCode Arcade. */
 
 //% color="#7b4dd8" weight=92 icon="\uf1b2" block="Shape Physics"
-//% groups="['Create', 'Motion', 'Materials', 'World', 'Collisions', 'Properties', 'Advanced']"
+//% groups="['Create', 'Motion', 'Materials', 'World', 'Joints', 'Collisions', 'Properties', 'Advanced']"
 namespace shapePhysics {
     export enum Shape {
         //% block="circle"
@@ -13,7 +13,19 @@ namespace shapePhysics {
         //% block="pentagon"
         Pentagon = 5,
         //% block="hexagon"
-        Hexagon = 6
+        Hexagon = 6,
+        //% block="heptagon"
+        Heptagon = 7,
+        //% block="octagon"
+        Octagon = 8,
+        //% block="nonagon"
+        Nonagon = 9,
+        //% block="decagon"
+        Decagon = 10,
+        //% block="heart"
+        Heart = 20,
+        //% block="star"
+        Star = 21
     }
 
     class Vec {
@@ -30,11 +42,15 @@ namespace shapePhysics {
         nx: number
         ny: number
         depth: number
+        contactX: number
+        contactY: number
         constructor() {
             this.hit = false
             this.nx = 0
             this.ny = 0
             this.depth = 0
+            this.contactX = 0
+            this.contactY = 0
         }
     }
 
@@ -52,6 +68,9 @@ namespace shapePhysics {
         angularVelocity: number
         mass: number
         inverseMass: number
+        inertia: number
+        inverseInertia: number
+        torque: number
         restitution: number
         friction: number
         drag: number
@@ -76,6 +95,9 @@ namespace shapePhysics {
             this.angularVelocity = 0
             this.mass = 1
             this.inverseMass = 1
+            this.inertia = 1
+            this.inverseInertia = 1
+            this.torque = 0
             this.restitution = 0.4
             this.friction = 0.25
             this.drag = 0
@@ -86,6 +108,33 @@ namespace shapePhysics {
             this.lastDrawAngle = -9999
             this.sprite = sprites.create(drawBodyImage(this), PhysicsSpriteKind.Body)
             this.sprite.setPosition(x, y)
+            updateInertia(this)
+        }
+    }
+
+    export class PhysicsJoint {
+        bodyA: PhysicsBody
+        bodyB: PhysicsBody
+        anchorX: number
+        anchorY: number
+        length: number
+        stiffness: number
+        damping: number
+        breakForce: number
+        enabled: boolean
+        worldPinned: boolean
+
+        constructor(bodyA: PhysicsBody, bodyB: PhysicsBody, length: number) {
+            this.bodyA = bodyA
+            this.bodyB = bodyB
+            this.anchorX = 0
+            this.anchorY = 0
+            this.length = Math.max(0, length)
+            this.stiffness = 1
+            this.damping = 0.2
+            this.breakForce = 999999
+            this.enabled = true
+            this.worldPinned = false
         }
     }
 
@@ -112,6 +161,8 @@ namespace shapePhysics {
     let lastBodyA: PhysicsBody = null
     let lastBodyB: PhysicsBody = null
     let lastOtherByBody: PhysicsBody[] = []
+    let joints: PhysicsJoint[] = []
+    let drawJoints = false
 
     /** Create a circle body. */
     //% blockId=shape_physics_create_circle
@@ -122,7 +173,7 @@ namespace shapePhysics {
         return createBody(Shape.Circle, x, y, radius, color)
     }
 
-    /** Create a regular triangle, square, pentagon, or hexagon. */
+    /** Create a regular polygon, heart, or star. */
     //% blockId=shape_physics_create_polygon
     //% block="create $shape at x $x y $y size $radius color $color"
     //% x.defl=80 y.defl=20 radius.defl=10 color.shadow=colorNumberPicker color.defl=7
@@ -151,6 +202,7 @@ namespace shapePhysics {
         rectangleWidths.push(width)
         rectangleHeights.push(height)
         rectangleBodyIds.push(body.id)
+        updateInertia(body)
         return body
     }
 
@@ -225,6 +277,24 @@ namespace shapePhysics {
         if (body && rectangleIndex(body) < 0) body.angularVelocity = degreesPerSecond
     }
 
+    /** Apply rotational force for this frame. */
+    //% blockId=shape_physics_apply_torque
+    //% block="apply torque $torque to $body"
+    //% torque.defl=100 group="Motion" weight=45
+    export function applyTorque(body: PhysicsBody, torque: number) {
+        if (!body || body.isStatic) return
+        body.torque += torque
+    }
+
+    /** Apply an immediate rotational impulse. */
+    //% blockId=shape_physics_apply_angular_impulse
+    //% block="apply angular impulse $impulse to $body"
+    //% impulse.defl=20 group="Motion" weight=40
+    export function applyAngularImpulse(body: PhysicsBody, impulse: number) {
+        if (!body || body.isStatic) return
+        body.angularVelocity += impulse * body.inverseInertia * 180 / Math.PI
+    }
+
     /** Set mass. Larger values are harder to move. */
     //% blockId=shape_physics_set_mass
     //% block="set $body mass to $mass"
@@ -233,6 +303,7 @@ namespace shapePhysics {
         if (!body || body.isStatic) return
         body.mass = Math.max(0.1, mass)
         body.inverseMass = 1 / body.mass
+        updateInertia(body)
     }
 
     /** Set bounciness from 0 to 100 percent. */
@@ -267,6 +338,7 @@ namespace shapePhysics {
         if (!body) return
         body.isStatic = enabled
         body.inverseMass = enabled ? 0 : 1 / Math.max(0.1, body.mass)
+        updateInertia(body)
         if (enabled) {
             body.vx = 0
             body.vy = 0
@@ -321,6 +393,84 @@ namespace shapePhysics {
     //% iterations.defl=2 iterations.min=1 iterations.max=6 group="World" weight=60
     export function setSolverIterations(iterations: number) {
         solverIterations = Math.max(1, Math.min(6, iterations))
+    }
+
+    /** Connect two bodies at a fixed distance. Use 0 to keep their current distance. */
+    //% blockId=shape_physics_create_distance_joint
+    //% block="connect $bodyA to $bodyB with distance joint length $length"
+    //% length.defl=0 length.min=0 group="Joints" weight=100
+    export function createDistanceJoint(bodyA: PhysicsBody, bodyB: PhysicsBody, length: number): PhysicsJoint {
+        if (!bodyA || !bodyB) return null
+        if (length <= 0) length = distance(bodyA.x, bodyA.y, bodyB.x, bodyB.y)
+        const joint = new PhysicsJoint(bodyA, bodyB, length)
+        joint.stiffness = 1
+        joint.damping = 0.4
+        joints.push(joint)
+        return joint
+    }
+
+    /** Connect two bodies with a flexible spring. */
+    //% blockId=shape_physics_create_spring_joint
+    //% block="connect $bodyA to $bodyB with spring length $length stiffness $stiffness percent damping $damping percent"
+    //% length.defl=30 length.min=0 stiffness.defl=30 stiffness.min=1 stiffness.max=100 damping.defl=20 damping.min=0 damping.max=100
+    //% group="Joints" weight=90
+    export function createSpringJoint(bodyA: PhysicsBody, bodyB: PhysicsBody, length: number, stiffness: number, damping: number): PhysicsJoint {
+        if (!bodyA || !bodyB) return null
+        if (length <= 0) length = distance(bodyA.x, bodyA.y, bodyB.x, bodyB.y)
+        const joint = new PhysicsJoint(bodyA, bodyB, length)
+        joint.stiffness = Math.max(1, Math.min(100, stiffness)) / 100
+        joint.damping = Math.max(0, Math.min(100, damping)) / 100
+        joints.push(joint)
+        return joint
+    }
+
+    /** Pin a body to a fixed point in the world. */
+    //% blockId=shape_physics_create_pin_joint
+    //% block="pin $body to world x $x y $y length $length"
+    //% x.defl=80 y.defl=20 length.defl=30 length.min=0 group="Joints" weight=80
+    export function createPinJoint(body: PhysicsBody, x: number, y: number, length: number): PhysicsJoint {
+        if (!body) return null
+        if (length <= 0) length = distance(body.x, body.y, x, y)
+        const joint = new PhysicsJoint(body, null, length)
+        joint.worldPinned = true
+        joint.anchorX = x
+        joint.anchorY = y
+        joint.stiffness = 1
+        joint.damping = 0.4
+        joints.push(joint)
+        return joint
+    }
+
+    /** Change a joint's target length. */
+    //% blockId=shape_physics_set_joint_length
+    //% block="set $joint length to $length"
+    //% length.defl=30 length.min=0 group="Joints" weight=70
+    export function setJointLength(joint: PhysicsJoint, length: number) {
+        if (joint) joint.length = Math.max(0, length)
+    }
+
+    /** Set the force that breaks a joint. */
+    //% blockId=shape_physics_set_joint_break_force
+    //% block="set $joint break force to $force"
+    //% force.defl=1000 force.min=0 group="Joints" weight=60
+    export function setJointBreakForce(joint: PhysicsJoint, force: number) {
+        if (joint) joint.breakForce = Math.max(0, force)
+    }
+
+    /** Remove a joint without removing its bodies. */
+    //% blockId=shape_physics_destroy_joint
+    //% block="destroy physics joint $joint"
+    //% group="Advanced" weight=85
+    export function destroyJoint(joint: PhysicsJoint) {
+        if (joint) joint.enabled = false
+    }
+
+    /** Draw joint lines for debugging. */
+    //% blockId=shape_physics_draw_joints
+    //% block="draw physics joints $enabled"
+    //% enabled.defl=true group="Advanced" weight=80
+    export function showJoints(enabled: boolean) {
+        drawJoints = enabled
     }
 
     /** Run code when any new collision begins. */
@@ -411,6 +561,7 @@ namespace shapePhysics {
         rectangleWidths = []
         rectangleHeights = []
         lastOtherByBody = []
+        joints = []
     }
 
     function install() {
@@ -418,6 +569,15 @@ namespace shapePhysics {
         installed = true
         game.onUpdate(function () {
             if (simulationEnabled) step()
+        })
+        game.onPaint(function () {
+            if (!drawJoints) return
+            for (let joint of joints) {
+                if (!joint.enabled || !joint.bodyA || joint.bodyA.removed) continue
+                const endX = joint.worldPinned ? joint.anchorX : joint.bodyB.x
+                const endY = joint.worldPinned ? joint.anchorY : joint.bodyB.y
+                screen.drawLine(Math.round(joint.bodyA.x), Math.round(joint.bodyA.y), Math.round(endX), Math.round(endY), 12)
+            }
         })
     }
 
@@ -433,6 +593,8 @@ namespace shapePhysics {
             body.vy += body.forceY * body.inverseMass * dt
             body.forceX = 0
             body.forceY = 0
+            body.angularVelocity += body.torque * body.inverseInertia * dt * 180 / Math.PI
+            body.torque = 0
             const dragFactor = Math.max(0, 1 - body.drag * dt)
             body.vx *= dragFactor
             body.vy *= dragFactor
@@ -446,6 +608,7 @@ namespace shapePhysics {
 
         currentContacts = []
         for (let iteration = 0; iteration < solverIterations; iteration++) {
+            for (let joint of joints) solveJoint(joint)
             for (let i = 0; i < bodies.length; i++) {
                 const a = bodies[i]
                 if (a.removed) continue
@@ -461,6 +624,50 @@ namespace shapePhysics {
             }
         }
         previousContacts = currentContacts
+    }
+
+    function solveJoint(joint: PhysicsJoint) {
+        if (!joint.enabled || !joint.bodyA || joint.bodyA.removed) return
+        if (!joint.worldPinned && (!joint.bodyB || joint.bodyB.removed)) return
+        const a = joint.bodyA
+        const targetX = joint.worldPinned ? joint.anchorX : joint.bodyB.x
+        const targetY = joint.worldPinned ? joint.anchorY : joint.bodyB.y
+        const dx = targetX - a.x
+        const dy = targetY - a.y
+        const currentLength = Math.sqrt(dx * dx + dy * dy)
+        if (currentLength < 0.001) return
+        const nx = dx / currentLength
+        const ny = dy / currentLength
+        const error = currentLength - joint.length
+        const stress = Math.abs(error) * joint.stiffness * 100
+        if (stress > joint.breakForce) {
+            joint.enabled = false
+            return
+        }
+        const inverseB = joint.worldPinned ? 0 : joint.bodyB.inverseMass
+        const inverseSum = a.inverseMass + inverseB
+        if (inverseSum <= 0) return
+        const correction = error * joint.stiffness / inverseSum
+        if (!a.isStatic) {
+            a.x += nx * correction * a.inverseMass
+            a.y += ny * correction * a.inverseMass
+        }
+        if (!joint.worldPinned && !joint.bodyB.isStatic) {
+            joint.bodyB.x -= nx * correction * inverseB
+            joint.bodyB.y -= ny * correction * inverseB
+        }
+        const velocityBX = joint.worldPinned ? 0 : joint.bodyB.vx
+        const velocityBY = joint.worldPinned ? 0 : joint.bodyB.vy
+        const relativeVelocity = (velocityBX - a.vx) * nx + (velocityBY - a.vy) * ny
+        const dampingImpulse = relativeVelocity * joint.damping / inverseSum
+        if (!a.isStatic) {
+            a.vx += nx * dampingImpulse * a.inverseMass
+            a.vy += ny * dampingImpulse * a.inverseMass
+        }
+        if (!joint.worldPinned && !joint.bodyB.isStatic) {
+            joint.bodyB.vx -= nx * dampingImpulse * inverseB
+            joint.bodyB.vy -= ny * dampingImpulse * inverseB
+        }
     }
 
     function solveBounds(body: PhysicsBody) {
@@ -517,10 +724,13 @@ namespace shapePhysics {
     }
 
     function collide(a: PhysicsBody, b: PhysicsBody): Manifold {
-        if (a.shape == Shape.Circle && b.shape == Shape.Circle) return circleCircle(a, b)
-        if (a.shape == Shape.Circle) return circlePolygon(a, b, false)
-        if (b.shape == Shape.Circle) return circlePolygon(b, a, true)
-        return polygonPolygon(a, b)
+        let result: Manifold = null
+        if (isCircleCollider(a) && isCircleCollider(b)) result = circleCircle(a, b)
+        else if (isCircleCollider(a)) result = circlePolygon(a, b, false)
+        else if (isCircleCollider(b)) result = circlePolygon(b, a, true)
+        else result = polygonPolygon(a, b)
+        if (result.hit) setApproximateContact(a, b, result)
+        return result
     }
 
     function circleCircle(a: PhysicsBody, b: PhysicsBody): Manifold {
@@ -671,21 +881,36 @@ namespace shapePhysics {
             b.y += collision.ny * correction * b.inverseMass
         }
 
-        const relativeX = b.vx - a.vx
-        const relativeY = b.vy - a.vy
+        const raX = collision.contactX - a.x
+        const raY = collision.contactY - a.y
+        const rbX = collision.contactX - b.x
+        const rbY = collision.contactY - b.y
+        const angularA = a.angularVelocity * Math.PI / 180
+        const angularB = b.angularVelocity * Math.PI / 180
+        const velocityAX = a.vx - angularA * raY
+        const velocityAY = a.vy + angularA * raX
+        const velocityBX = b.vx - angularB * rbY
+        const velocityBY = b.vy + angularB * rbX
+        const relativeX = velocityBX - velocityAX
+        const relativeY = velocityBY - velocityAY
         const velocityAlongNormal = relativeX * collision.nx + relativeY * collision.ny
         if (velocityAlongNormal > 0) return
         const restitution = Math.min(a.restitution, b.restitution)
-        const impulseMagnitude = -(1 + restitution) * velocityAlongNormal / inverseMassSum
+        const crossANormal = raX * collision.ny - raY * collision.nx
+        const crossBNormal = rbX * collision.ny - rbY * collision.nx
+        const normalDenominator = inverseMassSum + crossANormal * crossANormal * a.inverseInertia + crossBNormal * crossBNormal * b.inverseInertia
+        const impulseMagnitude = -(1 + restitution) * velocityAlongNormal / Math.max(0.0001, normalDenominator)
         const impulseX = impulseMagnitude * collision.nx
         const impulseY = impulseMagnitude * collision.ny
         if (!a.isStatic) {
             a.vx -= impulseX * a.inverseMass
             a.vy -= impulseY * a.inverseMass
+            a.angularVelocity -= (raX * impulseY - raY * impulseX) * a.inverseInertia * 180 / Math.PI
         }
         if (!b.isStatic) {
             b.vx += impulseX * b.inverseMass
             b.vy += impulseY * b.inverseMass
+            b.angularVelocity += (rbX * impulseY - rbY * impulseX) * b.inverseInertia * 180 / Math.PI
         }
 
         let tangentX = relativeX - velocityAlongNormal * collision.nx
@@ -694,24 +919,53 @@ namespace shapePhysics {
         if (tangentLength < 0.001) return
         tangentX /= tangentLength
         tangentY /= tangentLength
-        let frictionMagnitude = -(relativeX * tangentX + relativeY * tangentY) / inverseMassSum
+        const crossATangent = raX * tangentY - raY * tangentX
+        const crossBTangent = rbX * tangentY - rbY * tangentX
+        const tangentDenominator = inverseMassSum + crossATangent * crossATangent * a.inverseInertia + crossBTangent * crossBTangent * b.inverseInertia
+        let frictionMagnitude = -(relativeX * tangentX + relativeY * tangentY) / Math.max(0.0001, tangentDenominator)
         const frictionLimit = impulseMagnitude * Math.sqrt(a.friction * b.friction)
         frictionMagnitude = Math.max(-frictionLimit, Math.min(frictionLimit, frictionMagnitude))
         if (!a.isStatic) {
             a.vx -= tangentX * frictionMagnitude * a.inverseMass
             a.vy -= tangentY * frictionMagnitude * a.inverseMass
+            a.angularVelocity -= (raX * tangentY - raY * tangentX) * frictionMagnitude * a.inverseInertia * 180 / Math.PI
         }
         if (!b.isStatic) {
             b.vx += tangentX * frictionMagnitude * b.inverseMass
             b.vy += tangentY * frictionMagnitude * b.inverseMass
+            b.angularVelocity += (rbX * tangentY - rbY * tangentX) * frictionMagnitude * b.inverseInertia * 180 / Math.PI
         }
+    }
+
+    function setApproximateContact(a: PhysicsBody, b: PhysicsBody, collision: Manifold) {
+        const pointA = supportPoint(a, collision.nx, collision.ny)
+        const pointB = supportPoint(b, -collision.nx, -collision.ny)
+        collision.contactX = (pointA.x + pointB.x) / 2
+        collision.contactY = (pointA.y + pointB.y) / 2
+    }
+
+    function supportPoint(body: PhysicsBody, directionX: number, directionY: number): Vec {
+        if (isCircleCollider(body)) {
+            return new Vec(body.x + directionX * body.radius, body.y + directionY * body.radius)
+        }
+        const vertices = worldVertices(body)
+        let best = vertices[0]
+        let bestProjection = best.x * directionX + best.y * directionY
+        for (let vertex of vertices) {
+            const projection = vertex.x * directionX + vertex.y * directionY
+            if (projection > bestProjection) {
+                best = vertex
+                bestProjection = projection
+            }
+        }
+        return best
     }
 
     function worldVertices(body: PhysicsBody): Vec[] {
         const rectangle = rectangleIndex(body)
         if (rectangle >= 0) return rectangleVertices(body, rectangleWidths[rectangle], rectangleHeights[rectangle])
         const vertices: Vec[] = []
-        const sides = body.shape
+        const sides = collisionSides(body)
         const rotationRadians = body.rotation * Math.PI / 180 - Math.PI / 2
         for (let i = 0; i < sides; i++) {
             const angle = rotationRadians + i * Math.PI * 2 / sides
@@ -736,6 +990,8 @@ namespace shapePhysics {
     }
 
     function drawBodyImage(body: PhysicsBody): Image {
+        if (body.shape == Shape.Heart) return drawHeartImage(body)
+        if (body.shape == Shape.Star) return drawStarImage(body)
         if (body.shape == Shape.Circle) {
             const imageSize = body.radius * 2 + 3
             const result = image.create(imageSize, imageSize)
@@ -769,6 +1025,48 @@ namespace shapePhysics {
         return result
     }
 
+    function drawHeartImage(body: PhysicsBody): Image {
+        const size = body.radius * 2 + 5
+        const result = image.create(size, size)
+        const center = Math.idiv(size, 2)
+        const lobeRadius = Math.max(2, Math.idiv(body.radius, 2))
+        result.fillCircle(center - Math.idiv(body.radius, 3), center - Math.idiv(body.radius, 4), lobeRadius, body.color)
+        result.fillCircle(center + Math.idiv(body.radius, 3), center - Math.idiv(body.radius, 4), lobeRadius, body.color)
+        for (let y = 0; y <= body.radius; y++) {
+            const halfWidth = body.radius - y
+            result.fillRect(center - halfWidth, center + y - 1, halfWidth * 2 + 1, 1, body.color)
+        }
+        return result
+    }
+
+    function drawStarImage(body: PhysicsBody): Image {
+        const size = body.radius * 2 + 5
+        const result = image.create(size, size)
+        const center = Math.idiv(size, 2)
+        const radians = body.rotation * Math.PI / 180 - Math.PI / 2
+        let firstX = 0
+        let firstY = 0
+        let oldX = 0
+        let oldY = 0
+        for (let i = 0; i < 10; i++) {
+            const pointRadius = i % 2 == 0 ? body.radius : body.radius * 0.45
+            const angle = radians + i * Math.PI / 5
+            const x = Math.round(center + Math.cos(angle) * pointRadius)
+            const y = Math.round(center + Math.sin(angle) * pointRadius)
+            if (i == 0) {
+                firstX = x
+                firstY = y
+            } else {
+                result.drawLine(oldX, oldY, x, y, body.color)
+            }
+            oldX = x
+            oldY = y
+        }
+        result.drawLine(oldX, oldY, firstX, firstY, body.color)
+        floodFillCenter(result, center, center, body.color)
+        return result
+    }
+
     function drawRectangleImage(width: number, height: number, color: number): Image {
         const result = image.create(Math.max(1, width), Math.max(1, height))
         result.fill(color)
@@ -776,7 +1074,7 @@ namespace shapePhysics {
     }
 
     function refreshBodyImage(body: PhysicsBody, force: boolean) {
-        if (body.shape == Shape.Circle || rectangleIndex(body) >= 0) return
+        if (body.shape == Shape.Circle || body.shape == Shape.Heart || rectangleIndex(body) >= 0) return
         const angle = Math.round(body.rotation)
         if (!force && angle == body.lastDrawAngle) return
         body.lastDrawAngle = angle
@@ -802,6 +1100,40 @@ namespace shapePhysics {
         const dx = x2 - x1
         const dy = y2 - y1
         return dx * dx + dy * dy
+    }
+
+    function isCircleCollider(body: PhysicsBody): boolean {
+        return body.shape == Shape.Circle || body.shape == Shape.Heart
+    }
+
+    function collisionSides(body: PhysicsBody): number {
+        if (body.shape == Shape.Star) return 5
+        return body.shape
+    }
+
+    function distance(x1: number, y1: number, x2: number, y2: number): number {
+        return Math.sqrt(squaredDistance(x1, y1, x2, y2))
+    }
+
+    function updateInertia(body: PhysicsBody) {
+        if (!body || body.isStatic) {
+            if (body) {
+                body.inertia = 999999
+                body.inverseInertia = 0
+            }
+            return
+        }
+        const rectangle = rectangleIndex(body)
+        if (rectangle >= 0) {
+            const width = rectangleWidths[rectangle]
+            const height = rectangleHeights[rectangle]
+            body.inertia = body.mass * (width * width + height * height) / 12
+        } else if (isCircleCollider(body)) {
+            body.inertia = 0.5 * body.mass * body.radius * body.radius
+        } else {
+            body.inertia = 0.5 * body.mass * body.radius * body.radius
+        }
+        body.inverseInertia = body.inertia > 0 ? 1 / body.inertia : 0
     }
 
     function clampVisibleColor(color: number): number {
