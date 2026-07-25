@@ -1,0 +1,21 @@
+{
+    "name": "arcade-shape-physics",
+    "version": "0.1.0",
+    "description": "Block-friendly circle and convex polygon physics for MakeCode Arcade.",
+    "license": "MIT",
+    "public": true,
+    "files": [
+        "physics.ts",
+        "README.md"
+    ],
+    "testFiles": [
+        "test.ts"
+    ],
+    "dependencies": {
+        "device": "*"
+    },
+    "supportedTargets": [
+        "arcade"
+    ],
+    "preferredEditor": "tsprj"
+}

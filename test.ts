@@ -1,0 +1,7 @@
+shapePhysics.setGravity(0, 100)
+const floor = shapePhysics.createPlatform(80, 112, 150, 8, 1)
+const ball = shapePhysics.createCircle(50, 20, 7, 8)
+const triangle = shapePhysics.createPolygon(shapePhysics.Shape.Triangle, 80, 20, 9, 5)
+const hexagon = shapePhysics.createPolygon(shapePhysics.Shape.Hexagon, 110, 20, 10, 7)
+shapePhysics.setBounciness(ball, 70)
+shapePhysics.setAngularVelocity(hexagon, 90)
